@@ -1,5 +1,8 @@
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+
 from pydantic import BaseModel
+
 import joblib
 import pandas as pd
 import math
@@ -13,6 +16,7 @@ from urllib.parse import urlparse
 
 MODEL_PATH = "models/random_forest_engineered.pkl"
 THRESHOLD = 0.343
+
 
 # Load model bundle
 bundle = joblib.load(MODEL_PATH)
@@ -29,6 +33,19 @@ app = FastAPI(
     title="Phishing URL Detection API",
     description="API untuk mendeteksi URL phishing menggunakan Random Forest.",
     version="1.0.0",
+)
+
+
+# ============================================================
+# CORS
+# ============================================================
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=False,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 
@@ -234,6 +251,7 @@ def extract_features(url: str) -> dict:
     fe_underscore_count = original_url.count("_")
     fe_pipe_count = original_url.count("|")
     fe_star_count = original_url.count("*")
+
     fe_paren_count = (
         original_url.count("(")
         + original_url.count(")")
@@ -298,11 +316,9 @@ def extract_features(url: str) -> dict:
         if label
     ]
 
-    max_label_length = (
-        max(
-            (len(label) for label in hostname_labels),
-            default=0
-        )
+    max_label_length = max(
+        (len(label) for label in hostname_labels),
+        default=0
     )
 
     fe_long_hostname_label = int(
@@ -433,7 +449,7 @@ def predict(request: URLRequest):
         # Probability class
         probabilities = model.predict_proba(X)[0]
 
-        # Random Forest biasanya:
+        # Random Forest:
         # class 0 = legitimate
         # class 1 = phishing
         phishing_probability = float(
