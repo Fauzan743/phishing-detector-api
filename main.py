@@ -4,6 +4,7 @@ import joblib
 import pandas as pd
 import math
 import re
+import requests
 from urllib.parse import urlparse
 
 
@@ -13,6 +14,7 @@ from urllib.parse import urlparse
 
 MODEL_PATH = "models/random_forest_engineered.pkl"
 THRESHOLD = 0.343
+
 
 # Load model bundle
 bundle = joblib.load(MODEL_PATH)
@@ -27,8 +29,11 @@ FEATURES = bundle["features"]
 
 app = FastAPI(
     title="Phishing URL Detection API",
-    description="API untuk mendeteksi URL phishing menggunakan Random Forest.",
-    version="1.0.0",
+    description=(
+        "API untuk mendeteksi URL phishing menggunakan "
+        "Random Forest dan PhishDestroy Threat Intelligence."
+    ),
+    version="1.1.0",
 )
 
 
@@ -46,6 +51,7 @@ class URLRequest(BaseModel):
 
 def calculate_entropy(text: str) -> float:
     """Menghitung Shannon entropy."""
+
     if not text:
         return 0.0
 
@@ -110,8 +116,15 @@ def extract_features(url: str) -> dict:
     subdom_cnt = max(len(hostname_parts) - 2, 0)
 
     # Character counts
-    letter_cnt = sum(c.isalpha() for c in original_url)
-    digit_cnt = sum(c.isdigit() for c in original_url)
+    letter_cnt = sum(
+        c.isalpha()
+        for c in original_url
+    )
+
+    digit_cnt = sum(
+        c.isdigit()
+        for c in original_url
+    )
 
     special_cnt = sum(
         not c.isalnum()
@@ -128,17 +141,20 @@ def extract_features(url: str) -> dict:
     # Ratios
     letter_ratio = (
         letter_cnt / url_len
-        if url_len > 0 else 0
+        if url_len > 0
+        else 0
     )
 
     digit_ratio = (
         digit_cnt / url_len
-        if url_len > 0 else 0
+        if url_len > 0
+        else 0
     )
 
     spec_ratio = (
         special_cnt / url_len
-        if url_len > 0 else 0
+        if url_len > 0
+        else 0
     )
 
     is_https = int(
@@ -172,17 +188,20 @@ def extract_features(url: str) -> dict:
 
     hostname_digit_ratio = (
         hostname_digit_count / len(hostname)
-        if hostname else 0
+        if hostname
+        else 0
     )
 
     hostname_letter_ratio = (
         hostname_letter_count / len(hostname)
-        if hostname else 0
+        if hostname
+        else 0
     )
 
     hostname_dash_ratio = (
         hostname_dash_count / len(hostname)
-        if hostname else 0
+        if hostname
+        else 0
     )
 
     fe_subdomain_count = max(
@@ -192,27 +211,32 @@ def extract_features(url: str) -> dict:
 
     fe_path_url_ratio = (
         path_len / url_len
-        if url_len > 0 else 0
+        if url_len > 0
+        else 0
     )
 
     fe_query_url_ratio = (
         query_len / url_len
-        if url_len > 0 else 0
+        if url_len > 0
+        else 0
     )
 
     fe_hostname_url_ratio = (
         len(hostname) / url_len
-        if url_len > 0 else 0
+        if url_len > 0
+        else 0
     )
 
     fe_special_url_ratio = (
         special_cnt / url_len
-        if url_len > 0 else 0
+        if url_len > 0
+        else 0
     )
 
     fe_digit_url_ratio = (
         digit_cnt / url_len
-        if url_len > 0 else 0
+        if url_len > 0
+        else 0
     )
 
     fe_at_count = original_url.count("@")
@@ -234,35 +258,48 @@ def extract_features(url: str) -> dict:
     fe_underscore_count = original_url.count("_")
     fe_pipe_count = original_url.count("|")
     fe_star_count = original_url.count("*")
+
     fe_paren_count = (
         original_url.count("(")
         + original_url.count(")")
     )
 
-    # Port handling dibuat aman karena parsed.port
-    # dapat menghasilkan ValueError pada port yang malformed.
+    # --------------------------------------------------------
+    # Port
+    # --------------------------------------------------------
+
     try:
         port = parsed.port
     except ValueError:
         port = None
 
-    fe_has_port = int(port is not None)
+    fe_has_port = int(
+        port is not None
+    )
 
     fe_nonstandard_port = int(
         port is not None
         and port not in (80, 443)
     )
 
+    # --------------------------------------------------------
     # Path segments
+    # --------------------------------------------------------
+
     path_segments = [
         segment
         for segment in path.split("/")
         if segment
     ]
 
-    fe_path_segment_count = len(path_segments)
+    fe_path_segment_count = len(
+        path_segments
+    )
 
+    # --------------------------------------------------------
     # Query parameters
+    # --------------------------------------------------------
+
     query_parameters = [
         parameter
         for parameter in query.split("&")
@@ -273,15 +310,24 @@ def extract_features(url: str) -> dict:
         query_parameters
     )
 
+    # --------------------------------------------------------
     # Double slash
+    # --------------------------------------------------------
+
     fe_double_slash_count = original_url.count("//")
 
+    # --------------------------------------------------------
     # Punycode
+    # --------------------------------------------------------
+
     fe_has_punycode = int(
         "xn--" in hostname.lower()
     )
 
+    # --------------------------------------------------------
     # IPv4-like
+    # --------------------------------------------------------
+
     fe_ipv4_like = int(
         bool(
             re.search(
@@ -291,31 +337,38 @@ def extract_features(url: str) -> dict:
         )
     )
 
+    # --------------------------------------------------------
     # Long hostname label
+    # --------------------------------------------------------
+
     hostname_labels = [
         label
         for label in hostname.split(".")
         if label
     ]
 
-    max_label_length = (
-        max(
-            (len(label) for label in hostname_labels),
-            default=0
-        )
+    max_label_length = max(
+        (
+            len(label)
+            for label in hostname_labels
+        ),
+        default=0
     )
 
     fe_long_hostname_label = int(
         max_label_length >= 20
     )
 
-    fe_max_subdomain_label_length = max_label_length
+    fe_max_subdomain_label_length = (
+        max_label_length
+    )
 
     # --------------------------------------------------------
     # Gabungkan semua fitur
     # --------------------------------------------------------
 
     features = {
+
         "url_len": url_len,
         "dom_len": dom_len,
         "is_ip": is_ip,
@@ -330,6 +383,7 @@ def extract_features(url: str) -> dict:
         "dot_cnt": dot_cnt,
         "dash_cnt": dash_cnt,
         "under_cnt": under_cnt,
+
         "letter_ratio": letter_ratio,
         "digit_ratio": digit_ratio,
         "spec_ratio": spec_ratio,
@@ -339,19 +393,58 @@ def extract_features(url: str) -> dict:
         "path_len": path_len,
         "query_len": query_len,
 
-        "fe_hostname_digit_count": hostname_digit_count,
-        "fe_hostname_letter_count": hostname_letter_count,
-        "fe_hostname_dash_count": hostname_dash_count,
-        "fe_hostname_dot_count": hostname_dot_count,
-        "fe_hostname_digit_ratio": hostname_digit_ratio,
-        "fe_hostname_letter_ratio": hostname_letter_ratio,
-        "fe_hostname_dash_ratio": hostname_dash_ratio,
-        "fe_subdomain_count": fe_subdomain_count,
-        "fe_path_url_ratio": fe_path_url_ratio,
-        "fe_query_url_ratio": fe_query_url_ratio,
-        "fe_hostname_url_ratio": fe_hostname_url_ratio,
-        "fe_special_url_ratio": fe_special_url_ratio,
-        "fe_digit_url_ratio": fe_digit_url_ratio,
+        "fe_hostname_digit_count": (
+            hostname_digit_count
+        ),
+
+        "fe_hostname_letter_count": (
+            hostname_letter_count
+        ),
+
+        "fe_hostname_dash_count": (
+            hostname_dash_count
+        ),
+
+        "fe_hostname_dot_count": (
+            hostname_dot_count
+        ),
+
+        "fe_hostname_digit_ratio": (
+            hostname_digit_ratio
+        ),
+
+        "fe_hostname_letter_ratio": (
+            hostname_letter_ratio
+        ),
+
+        "fe_hostname_dash_ratio": (
+            hostname_dash_ratio
+        ),
+
+        "fe_subdomain_count": (
+            fe_subdomain_count
+        ),
+
+        "fe_path_url_ratio": (
+            fe_path_url_ratio
+        ),
+
+        "fe_query_url_ratio": (
+            fe_query_url_ratio
+        ),
+
+        "fe_hostname_url_ratio": (
+            fe_hostname_url_ratio
+        ),
+
+        "fe_special_url_ratio": (
+            fe_special_url_ratio
+        ),
+
+        "fe_digit_url_ratio": (
+            fe_digit_url_ratio
+        ),
+
         "fe_at_count": fe_at_count,
         "fe_percent_count": fe_percent_count,
         "fe_encoded_count": fe_encoded_count,
@@ -364,14 +457,34 @@ def extract_features(url: str) -> dict:
         "fe_pipe_count": fe_pipe_count,
         "fe_star_count": fe_star_count,
         "fe_paren_count": fe_paren_count,
+
         "fe_has_port": fe_has_port,
-        "fe_nonstandard_port": fe_nonstandard_port,
-        "fe_path_segment_count": fe_path_segment_count,
-        "fe_query_parameter_count": fe_query_parameter_count,
-        "fe_double_slash_count": fe_double_slash_count,
-        "fe_has_punycode": fe_has_punycode,
+        "fe_nonstandard_port": (
+            fe_nonstandard_port
+        ),
+
+        "fe_path_segment_count": (
+            fe_path_segment_count
+        ),
+
+        "fe_query_parameter_count": (
+            fe_query_parameter_count
+        ),
+
+        "fe_double_slash_count": (
+            fe_double_slash_count
+        ),
+
+        "fe_has_punycode": (
+            fe_has_punycode
+        ),
+
         "fe_ipv4_like": fe_ipv4_like,
-        "fe_long_hostname_label": fe_long_hostname_label,
+
+        "fe_long_hostname_label": (
+            fe_long_hostname_label
+        ),
+
         "fe_max_subdomain_label_length": (
             fe_max_subdomain_label_length
         ),
@@ -381,15 +494,112 @@ def extract_features(url: str) -> dict:
 
 
 # ============================================================
+# PHISHDESTROY THREAT INTELLIGENCE
+# ============================================================
+
+def check_phishdestroy(url: str) -> dict:
+    """
+    Mengecek domain URL ke PhishDestroy.
+
+    PhishDestroy digunakan sebagai lapisan threat intelligence
+    untuk mengecek apakah domain sudah terdapat dalam blocklist.
+    """
+
+    # Pastikan URL dapat diproses oleh urlparse
+    parse_url = url.strip()
+
+    if "://" not in parse_url:
+        parse_url = "//" + parse_url
+
+    try:
+        parsed = urlparse(parse_url)
+        domain = parsed.hostname or ""
+        domain = domain.lower()
+
+    except Exception:
+        domain = ""
+
+    # Jika domain tidak berhasil diperoleh
+    if not domain:
+        return {
+            "available": False,
+            "domain": "",
+            "threat": False,
+            "message": (
+                "Domain tidak dapat diambil dari URL."
+            ),
+        }
+
+    try:
+        response = requests.get(
+            "https://api.destroy.tools/v1/check",
+            params={
+                "domain": domain
+            },
+            timeout=10,
+        )
+
+        response.raise_for_status()
+
+        result = response.json()
+
+        return {
+            "available": True,
+            "domain": result.get(
+                "domain",
+                domain
+            ),
+            "threat": bool(
+                result.get(
+                    "threat",
+                    False
+                )
+            ),
+            "message": result.get(
+                "message",
+                ""
+            ),
+        }
+
+    except requests.RequestException as e:
+
+        # Jika PhishDestroy tidak dapat diakses,
+        # Random Forest tetap digunakan.
+        return {
+            "available": False,
+            "domain": domain,
+            "threat": False,
+            "message": (
+                "PhishDestroy tidak dapat diakses: "
+                f"{str(e)}"
+            ),
+        }
+
+    except ValueError:
+
+        return {
+            "available": False,
+            "domain": domain,
+            "threat": False,
+            "message": (
+                "Respons PhishDestroy tidak valid."
+            ),
+        }
+
+
+# ============================================================
 # PREDICTION
 # ============================================================
 
+
 @app.get("/")
 def root():
+
     return {
         "status": "ok",
         "service": "Phishing URL Detection API",
         "model": "Random Forest Engineered",
+        "threat_intelligence": "PhishDestroy",
         "features": len(FEATURES),
         "threshold": THRESHOLD,
     }
@@ -397,10 +607,12 @@ def root():
 
 @app.get("/health")
 def health():
+
     return {
         "status": "healthy",
         "model_loaded": model is not None,
         "feature_count": len(FEATURES),
+        "threat_intelligence": "PhishDestroy",
     }
 
 
@@ -409,33 +621,50 @@ def predict(request: URLRequest):
 
     url = request.url.strip()
 
+    # --------------------------------------------------------
+    # Validasi URL
+    # --------------------------------------------------------
+
     if not url:
+
         raise HTTPException(
             status_code=400,
             detail="URL tidak boleh kosong."
         )
 
     if len(url) > 10000:
+
         raise HTTPException(
             status_code=400,
             detail="URL terlalu panjang."
         )
 
     try:
+
+        # ====================================================
+        # 1. RANDOM FOREST
+        # ====================================================
+
         feature_dict = extract_features(url)
 
         # Gunakan URUTAN fitur persis dari model
         X = pd.DataFrame(
-            [[feature_dict[f] for f in FEATURES]],
+            [
+                [
+                    feature_dict[f]
+                    for f in FEATURES
+                ]
+            ],
             columns=FEATURES,
         )
 
         # Probability class
         probabilities = model.predict_proba(X)[0]
 
-        # Random Forest biasanya:
+        # Random Forest:
         # class 0 = legitimate
         # class 1 = phishing
+
         phishing_probability = float(
             probabilities[1]
         )
@@ -444,28 +673,112 @@ def predict(request: URLRequest):
             probabilities[0]
         )
 
-        prediction = (
-            "PHISHING"
-            if phishing_probability >= THRESHOLD
-            else "LEGITIMATE"
+        # ====================================================
+        # 2. PHISHDESTROY
+        # ====================================================
+
+        phishdestroy_result = (
+            check_phishdestroy(url)
         )
 
+        phishdestroy_available = bool(
+            phishdestroy_result.get(
+                "available",
+                False
+            )
+        )
+
+        phishdestroy_threat = bool(
+            phishdestroy_result.get(
+                "threat",
+                False
+            )
+        )
+
+        # ====================================================
+        # 3. FINAL DECISION
+        # ====================================================
+
+        # URL dianggap PHISHING apabila:
+        #
+        # A. Random Forest memberikan probability
+        #    phishing >= threshold
+        #
+        # ATAU
+        #
+        # B. PhishDestroy mendeteksi domain sebagai threat.
+        #
+        # Jika PhishDestroy sedang tidak tersedia,
+        # keputusan tetap menggunakan Random Forest.
+
+        if phishing_probability >= THRESHOLD:
+
+            prediction = "PHISHING"
+
+        elif (
+            phishdestroy_available
+            and phishdestroy_threat
+        ):
+
+            prediction = "PHISHING"
+
+        else:
+
+            prediction = "LEGITIMATE"
+
+        # ====================================================
+        # 4. RESPONSE
+        # ====================================================
+
         return {
+
             "url": url,
+
             "prediction": prediction,
+
             "phishing_probability": round(
                 phishing_probability,
                 6
             ),
+
             "legitimate_probability": round(
                 legitimate_probability,
                 6
             ),
+
             "threshold": THRESHOLD,
+
+            "phishdestroy": {
+
+                "available": (
+                    phishdestroy_available
+                ),
+
+                "domain": (
+                    phishdestroy_result.get(
+                        "domain",
+                        ""
+                    )
+                ),
+
+                "threat": (
+                    phishdestroy_threat
+                ),
+
+                "message": (
+                    phishdestroy_result.get(
+                        "message",
+                        ""
+                    )
+                ),
+            },
         }
 
     except Exception as e:
+
         raise HTTPException(
             status_code=500,
-            detail=f"Gagal memproses URL: {str(e)}"
+            detail=(
+                f"Gagal memproses URL: {str(e)}"
+            )
         )
